@@ -7,6 +7,10 @@ using Microsoft.Bot.Builder.Dialogs;
 using System.Web.Http.Description;
 using System.Net.Http;
 using System.Diagnostics;
+using Microsoft.Bot.Builder.Dialogs.Internals;
+using Autofac;
+using System.Linq;
+using System.Collections.Generic;
 
 namespace Microsoft.Bot.Sample.SimpleEchoBot
 {
@@ -40,7 +44,7 @@ namespace Microsoft.Bot.Sample.SimpleEchoBot
             // check if activity is of type message
             if (activity != null && activity.GetActivityType() == ActivityTypes.Message)
             {
-                await Conversation.SendAsync(activity, () => new EchoDialog());
+                HandleUserMessage(activity);
             }
             else
             {
@@ -49,7 +53,7 @@ namespace Microsoft.Bot.Sample.SimpleEchoBot
             return new HttpResponseMessage(System.Net.HttpStatusCode.Accepted);
         }
 
-        private Activity HandleSystemMessage(Activity message)
+        private async Task<Activity> HandleSystemMessage(Activity message)
         {
             if (message.Type == ActivityTypes.DeleteUserData)
             {
@@ -59,8 +63,29 @@ namespace Microsoft.Bot.Sample.SimpleEchoBot
             else if (message.Type == ActivityTypes.ConversationUpdate)
             {
                 // Handle conversation state changes, like members being added and removed
-                // Use Activity.MembersAdded and Activity.MembersRemoved and Activity.Action for info
+                // Use .MembersAdded and Activity.MembersRemoved and Activity.Action for info
                 // Not available in all channels
+                Activity activity = message;
+                IConversationUpdateActivity update = activity;
+                using (var scope = DialogModule.BeginLifetimeScope(Conversation.Container, activity))
+                {
+                    var client = scope.Resolve<IConnectorClient>();
+                    if (update.MembersAdded.Any())
+                    {
+                        var reply = activity.CreateReply();
+                        var newMembers = update.MembersAdded?.Where(t => t.Id != activity.Recipient.Id);
+                        foreach (var newMember in newMembers)
+                        {
+                            reply.Text = "Welcome";
+                            if (!string.IsNullOrEmpty(newMember.Name))
+                            {
+                                reply.Text +=  $" {newMember.Name}";
+                            }
+                            reply.Text += ", I'm a automated bot planning to takeover the world !";
+                            await client.Conversations.ReplyToActivityAsync(reply);
+                        }
+                    }
+                }
             }
             else if (message.Type == ActivityTypes.ContactRelationUpdate)
             {
@@ -77,5 +102,70 @@ namespace Microsoft.Bot.Sample.SimpleEchoBot
 
             return null;
         }
+
+        private async Task<Activity> HandleUserMessage(Activity activity)
+        {
+            if (activity.Type == ActivityTypes.Message)
+            {
+                using (var scope = DialogModule.BeginLifetimeScope(Conversation.Container, activity))
+                {
+                    var client = scope.Resolve<IConnectorClient>();
+                    var reply = activity.CreateReply();
+
+
+                    if (activity.Text == "Yes, I'm.")
+                    {
+                        reply.Text = "Well, I work !";
+                        reply.Attachments.Add(new Attachment()
+                        {
+                            ContentUrl = "https://upload.wikimedia.org/wikipedia/en/a/a6/Bender_Rodriguez.png",
+                            ContentType = "image/png",
+                            Name = "Bender_Rodriguez.png"
+                        });
+                    }
+                    else if (activity.Text == "No, Order a pizza")
+                    {
+                        //await Conversation.SendAsync(activity, MakeRoot);
+                        reply.Text = "TODO: Start Order a Pizza Process.!";
+                    }
+                    else
+                    {
+                        reply.Text = "Are you here to test the bot ?";
+
+                        CardAction yesButton = new CardAction()
+                        {
+                            Type = "imBack",
+                            Title = "Yes, I'm.",
+                            Value = "Yes, I'm."
+                        };
+
+                        CardAction noButton = new CardAction()
+                        {
+                            Type = "imBack",
+                            Title = "No, Order a pizza",
+                            Value = "No, Order a pizza"
+                        };
+
+
+                        List<CardAction> cardButtons = new List<CardAction>();
+                        cardButtons.Add(yesButton);
+                        cardButtons.Add(noButton);
+
+                        HeroCard plCard = new HeroCard()
+                        {
+                            //Title = "I'm a hero card",
+                            //Subtitle = "Pig Latin Wikipedia Page",
+                            Buttons = cardButtons
+                        };
+                        Attachment plAttachment = plCard.ToAttachment();
+                        reply.Attachments.Add(plAttachment);
+                    }
+                    await client.Conversations.ReplyToActivityAsync(reply);
+                }
+            }
+
+            return null;
+        }
+
     }
 }
